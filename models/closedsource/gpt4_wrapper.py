@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Tuple
 class GPT4Wrapper:
     """【最終介面版】GPT-4 模型封裝器"""
     def __init__(self, config: Dict[str, Any]):
-        self.model_name = config.get("name", "gpt-4o")
+        self.model_name = config.get("name", "gpt-3.5-turbo")
         self.api_key = os.getenv("OPENAI_API_KEY")
         if not self.api_key: raise ValueError("OpenAI API key not found. Please set it as an environment variable 'OPENAI_API_KEY'.")
         self.temperature = config.get("temperature", 0.7)
