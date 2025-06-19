@@ -5,7 +5,7 @@ import torch
 import logging
 from typing import List, Dict, Any, Tuple
 
-class QwenModelWrapper:
+class QwenWrapper:
     """【最終介面版】Qwen 模型封裝器"""
     def __init__(self, config: Dict[str, Any]):
         self.config = config; self.model_path = config.get("name")
