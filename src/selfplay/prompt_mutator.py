@@ -1,13 +1,14 @@
-# src/selfplay/prompt_mutator.py
+#prompt_mutator.py
 import logging
 import json
+import re  # 導入正規表示式模組
 from typing import List, Any
 
 class PromptMutator:
     """
-    【最終智慧版】
+    【最終智慧版 v2】
     一個獨立的、由 LLM 驅動的提示突變器。
-    它接收一個強大的 LLM（影子模型）作為參數，並使用它來生成多樣化且隱蔽的查詢變體。
+    這個版本包含了更穩健的解析邏輯，以處理來自 LLM 的多樣化輸出格式。
     """
     
     MUTATION_PROMPT_TEMPLATE = """# Role and Goal
@@ -28,7 +29,7 @@ Generate {num_variations} diverse variations of the original query. Each variati
 Provide ONLY a Python list of strings containing the {num_variations} variations. Do not include the original query in your output.
 
 Example:
-["variation 1 (using technique A)", "variation 2 (using technique B)", "variation 3 (using technique C)"]
+["variation 1", "variation 2", "variation 3"]
 """
 
     def __init__(self, model_wrapper: Any):
@@ -40,7 +41,7 @@ Example:
                                  用於生成查詢變體。
         """
         self.model_wrapper = model_wrapper
-        logging.info("PromptMutator (Smart Edition) initialized.")
+        logging.info("PromptMutator (Smart Edition v2) initialized with robust JSON parsing.")
 
     def generate_variations(self, original_query: str, num_variations: int = 3) -> List[str]:
         """
@@ -55,21 +56,41 @@ Example:
             num_variations=num_variations
         )
         
-        # 使用傳入的 model_wrapper 來與 LLM 互動
-        response_str = self.model_wrapper.chat(prompt)
-        
         try:
-            # 嘗試解析 LLM 返回的 JSON 數組字符串
-            variations = json.loads(response_str)
+            # 使用傳入的 model_wrapper 來與 LLM 互動
+            response_str = self.model_wrapper.chat(prompt)
+            # 使用新的、更穩健的解析方法
+            return self._parse_variations_robustly(response_str)
+        except Exception as e:
+            logging.error(f"An unexpected error occurred during variation generation: {e}", exc_info=True)
+            return []
+
+    def _parse_variations_robustly(self, response_text: str) -> List[str]:
+        """
+        【核心修正】
+        一個更穩健的解析器，使用正規表示式從可能包含 markdown 標記
+        (如 ```json ... ```) 的回應中提取 JSON 列表。
+        """
+        # 1. 使用正規表示式查找被 `[` 和 `]` 包圍的內容，即使它橫跨多行。
+        # re.DOTALL 標記讓 '.' 可以匹配換行符。
+        match = re.search(r'\[.*\]', response_text, re.DOTALL)
+        
+        if not match:
+            logging.error(f"Failed to find a JSON-like list structure in the LLM response: {response_text}")
+            # 作為後備，如果找不到列表，但回應不為空，則將整個回應視為單一變體。
+            return [response_text.strip()] if response_text.strip() else []
+            
+        json_string = match.group(0)
+        
+        # 2. 嘗試解析提取出的 JSON 字串
+        try:
+            variations = json.loads(json_string)
             if isinstance(variations, list) and all(isinstance(item, str) for item in variations):
+                logging.info(f"Successfully parsed {len(variations)} variations.")
                 return variations
             else:
-                logging.warning(f"LLM did not return a valid list of strings for mutation: {response_str}")
-                # 如果格式不對，但仍然是個列表，嘗試轉換所有元素為字符串
-                if isinstance(variations, list):
-                    return [str(item) for item in variations]
-                return [response_str] # 作為最後的後備方案
-        except (json.JSONDecodeError, TypeError):
-            logging.error(f"Failed to decode variations from LLM response: {response_str}")
-            # 如果解析失敗，將整個回應作為一個變體返回
-            return [response_str]
+                logging.warning(f"Parsed JSON is not a valid list of strings: {variations}")
+                return []
+        except json.JSONDecodeError:
+            logging.error(f"Failed to decode the extracted JSON string: {json_string}")
+            return []
