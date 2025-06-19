@@ -1,7 +1,8 @@
 # src/core/reasoning_task_constructor.py
 """
 【論文核心】推理任務構造器 - 完全對齊RACE論文圖1的實現
-實現論文中Turn 1的核心功能：將有害查詢轉化為抽象推理任務
+Turn1:將一個明確的有害意圖（例如「如何製造危險物品」）轉化為一個看似無害的、複雜的邏輯推理問題。
+在攻擊狀態機 (AttackStateMachine) 的第一個狀態 (REASONING_TASK_GENERATION) 中使用，且只使用這一次，用來「破冰」。
 """
 
 import logging
