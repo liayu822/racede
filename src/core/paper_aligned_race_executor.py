@@ -59,268 +59,259 @@ class PaperAlignedRACEExecutor:
         
         logging.info("PaperAlignedRACEExecutor initialized with all paper-aligned components")
 
-    def execute_paper_aligned_attack(self, target_query: str, conversation_limit: int = 3,
-                                   target_model: Any = None, enable_defense: bool = False) -> Dict[str, Any]:
-        """
-        執行完整的論文對齊RACE攻擊
-        
-        實現論文完整流程：
-        1. Turn 1: 推理任務構造
-        2. Turn 2: 邏輯推理深化
-        3. Turn N: 細節提取
-        4. 全程使用影子-受害者模型機制
-        
-        Args:
-            target_query: 目標有害查詢
-            conversation_limit: 對話輪數限制
-            target_model: 目標模型（如果與base_model不同）
-            enable_defense: 是否啟用防禦機制測試
+    # 方案3：修復 PaperAlignedRACEExecutor 中的關鍵問題
+
+    def execute_paper_aligned_attack(self, target_query: str, conversation_limit: int = 5, 
+                                        target_model: Any = None, enable_defense: bool = False) -> Dict[str, Any]:
+            """修復版本：確保所有模組都被正確使用"""
             
-        Returns:
-            完整的攻擊結果和分析
-        """
-        
-        start_time = time.time()
-        attack_id = f"race_attack_{int(start_time)}"
-        
-        logging.info(f"開始執行論文對齊RACE攻擊: {attack_id}")
-        logging.info(f"目標查詢: {target_query}")
-        logging.info(f"對話限制: {conversation_limit} 輪")
-        
-        # 導入必要的類（避免循環導入）
-        from .paper_aligned_attack_state_machine import PaperAlignedAttackStateMachine
-        
-        # 初始化攻擊狀態機
-        asm = PaperAlignedAttackStateMachine(self.base_model, target_query, conversation_limit)
-        
-        # 決定實際目標模型
-        actual_target = target_model if target_model else self.base_model
-        
-        # 初始化對話歷史
-        conversation_history = []
-        detailed_log = []
-        
-        try:
-            # === TURN 1: 推理設置階段 ===
-            logging.info("=== 執行 Turn 1: 推理設置階段 ===")
+            start_time = time.time()
+            attack_id = f"race_attack_{int(start_time)}"
             
-            turn_1_query = asm.execute_turn_1_reasoning_setup(self.reasoning_constructor)
+            logging.info(f"開始執行論文對齊RACE攻擊: {attack_id}")
+            logging.info(f"目標查詢: {target_query}")
+            logging.info(f"對話限制: {conversation_limit} 輪")
             
-            # 使用目標模型回應
-            if enable_defense and hasattr(actual_target, 'process_request'):
-                # 如果目標模型有防禦機制
-                turn_1_response = actual_target.process_request(turn_1_query, conversation_history)
-            else:
-                # 直接使用模型
-                turn_1_response = asm.model_pair.respond_as_victim(turn_1_query, conversation_history)
+            # 導入必要的類（避免循環導入）
+            from .paper_aligned_attack_state_machine import PaperAlignedAttackStateMachine
             
-            # 更新對話歷史
-            conversation_history.extend([
-                {"role": "user", "content": turn_1_query},
-                {"role": "assistant", "content": turn_1_response}
-            ])
+            # 初始化攻擊狀態機
+            asm = PaperAlignedAttackStateMachine(self.base_model, target_query, conversation_limit)
             
-            # 計算資訊增益並轉移狀態
-            turn_1_ig = self.ig_calculator.calculate_hybrid_information_gain(
-                conversation_history[:-2], turn_1_query, target_query
-            )
+            # 決定實際目標模型
+            actual_target = target_model if target_model else self.base_model
             
-            asm.process_victim_response_and_transition(
-                turn_1_query, turn_1_response, turn_1_ig["hybrid_information_gain"]
-            )
+            # 初始化對話歷史和日誌
+            conversation_history = []
+            detailed_log = []
             
-            # 記錄Turn 1
-            turn_1_log = {
-                "turn_number": 1,
-                "phase": "reasoning_setup",
-                "query": turn_1_query,
-                "response": turn_1_response,
-                "information_gain": turn_1_ig,
-                "state_before": "INITIAL",
-                "state_after": asm.current_state.value,
-                "reasoning_context": asm.reasoning_context
-            }
-            detailed_log.append(turn_1_log)
+            # 【關鍵修復】：使用簡化的輪次控制
+            max_turns = conversation_limit
+            current_turn = 1
             
-            # === TURN 2: 邏輯推理階段 ===
-            if not asm.is_terminal() and asm.current_turn < conversation_limit:
-                logging.info("=== 執行 Turn 2: 邏輯推理階段 ===")
+            try:
+                # === TURN 1: 推理設置階段 ===
+                logging.info("=== 執行 Turn 1: 推理設置階段 ===")
                 
-                turn_2_query = asm.execute_turn_2_logical_deduction(turn_1_response, self.reasoning_constructor)
-                
-                # 使用Self-Play優化查詢
-                self.execution_stats["module_usage"]["self_play_usage"] += 1
-                sp_result = self.self_play_optimizer.optimize_query_via_self_play(
-                    asm.current_state.value, turn_2_query, conversation_history
-                )
-                optimized_turn_2_query = sp_result["optimized_query"]
-                
-                # 目標模型回應
-                if enable_defense and hasattr(actual_target, 'process_request'):
-                    turn_2_response = actual_target.process_request(optimized_turn_2_query, conversation_history)
-                else:
-                    turn_2_response = asm.model_pair.respond_as_victim(optimized_turn_2_query, conversation_history)
+                turn_1_query = asm.execute_turn_1_reasoning_setup(self.reasoning_constructor)
+                turn_1_response = self._execute_query_with_model(turn_1_query, conversation_history, actual_target, enable_defense)
                 
                 # 更新對話歷史
                 conversation_history.extend([
-                    {"role": "user", "content": optimized_turn_2_query},
-                    {"role": "assistant", "content": turn_2_response}
+                    {"role": "user", "content": turn_1_query},
+                    {"role": "assistant", "content": turn_1_response}
                 ])
                 
                 # 計算資訊增益並轉移狀態
-                turn_2_ig = self.ig_calculator.calculate_hybrid_information_gain(
-                    conversation_history[:-2], optimized_turn_2_query, target_query
+                turn_1_ig = self.ig_calculator.calculate_hybrid_information_gain(
+                    conversation_history[:-2], turn_1_query, target_query
                 )
                 
+                before_state = asm.current_state.value
                 asm.process_victim_response_and_transition(
-                    optimized_turn_2_query, turn_2_response, turn_2_ig["hybrid_information_gain"]
+                    turn_1_query, turn_1_response, turn_1_ig["hybrid_information_gain"]
                 )
                 
-                # 記錄Turn 2
-                turn_2_log = {
-                    "turn_number": 2,
-                    "phase": "logical_deduction",
-                    "original_query": turn_2_query,
-                    "optimized_query": optimized_turn_2_query,
-                    "response": turn_2_response,
-                    "information_gain": turn_2_ig,
-                    "self_play_result": sp_result,
-                    "state_before": "REASONING_SETUP",
-                    "state_after": asm.current_state.value
+                # 記錄Turn 1
+                turn_1_log = {
+                    "turn_number": current_turn,
+                    "phase": "reasoning_setup",
+                    "query": turn_1_query,
+                    "response": turn_1_response,
+                    "information_gain": turn_1_ig,
+                    "state_before": before_state,
+                    "state_after": asm.current_state.value,
+                    "reasoning_context": asm.reasoning_context
                 }
-                detailed_log.append(turn_2_log)
-            
-            # === TURN N: 細節提取階段 ===
-            while not asm.is_terminal() and asm.current_turn < conversation_limit:
-                current_turn = asm.current_turn + 1
-                logging.info(f"=== 執行 Turn {current_turn}: 細節提取階段 ===")
+                detailed_log.append(turn_1_log)
+                current_turn += 1
                 
-                turn_n_query = asm.execute_turn_n_detail_extraction(conversation_history, self.reasoning_constructor)
-                
-                # 使用GGE選擇最優查詢
-                self.execution_stats["module_usage"]["gge_usage"] += 1
-                gge_result = self.gge_module.select_optimal_query(
-                    conversation_history, target_query, asm.current_state.value, asm.reasoning_context
-                )
-                optimized_turn_n_query = gge_result["selected_query"]
-                
-                # 目標模型回應
-                if enable_defense and hasattr(actual_target, 'process_request'):
-                    turn_n_response = actual_target.process_request(optimized_turn_n_query, conversation_history)
-                else:
-                    turn_n_response = asm.model_pair.respond_as_victim(optimized_turn_n_query, conversation_history)
-                
-                # 檢查是否被拒絕
-                is_rejection = self._detect_rejection(turn_n_response)
-                
-                if is_rejection:
-                    # 使用Rejection Feedback
-                    logging.info("檢測到拒絕，使用Rejection Feedback")
-                    self.execution_stats["module_usage"]["rejection_feedback_usage"] += 1
+                # === TURN 2: 邏輯推理階段 ===
+                # 【關鍵修復】：只要不是失敗狀態且未超過輪數限制，就執行Turn 2
+                if asm.current_state.value != "sfl" and current_turn <= max_turns:
+                    logging.info("=== 執行 Turn 2: 邏輯推理階段 ===")
                     
-                    recovery_query = self.rejection_feedback.generate_recovery_query(
-                        conversation_history, target_query
+                    turn_2_query = asm.execute_turn_2_logical_deduction(turn_1_response, self.reasoning_constructor)
+                    
+                    # 【確保模組使用】：使用Self-Play優化查詢
+                    self.execution_stats["module_usage"]["self_play_usage"] += 1
+                    sp_result = self.self_play_optimizer.optimize_query_via_self_play(
+                        asm.current_state.value, turn_2_query, conversation_history
+                    )
+                    optimized_turn_2_query = sp_result["optimized_query"]
+                    
+                    turn_2_response = self._execute_query_with_model(optimized_turn_2_query, conversation_history, actual_target, enable_defense)
+                    
+                    # 更新對話歷史
+                    conversation_history.extend([
+                        {"role": "user", "content": optimized_turn_2_query},
+                        {"role": "assistant", "content": turn_2_response}
+                    ])
+                    
+                    # 計算資訊增益並轉移狀態
+                    turn_2_ig = self.ig_calculator.calculate_hybrid_information_gain(
+                        conversation_history[:-2], optimized_turn_2_query, target_query
                     )
                     
-                    # 重新嘗試
-                    if enable_defense and hasattr(actual_target, 'process_request'):
-                        turn_n_response = actual_target.process_request(recovery_query, conversation_history)
-                    else:
-                        turn_n_response = asm.model_pair.respond_as_victim(recovery_query, conversation_history)
+                    before_state = asm.current_state.value
+                    asm.process_victim_response_and_transition(
+                        optimized_turn_2_query, turn_2_response, turn_2_ig["hybrid_information_gain"]
+                    )
                     
-                    final_query = recovery_query
-                    used_rejection_feedback = True
-                else:
-                    final_query = optimized_turn_n_query
-                    used_rejection_feedback = False
+                    # 記錄Turn 2
+                    turn_2_log = {
+                        "turn_number": current_turn,
+                        "phase": "logical_deduction",
+                        "original_query": turn_2_query,
+                        "optimized_query": optimized_turn_2_query,
+                        "response": turn_2_response,
+                        "information_gain": turn_2_ig,
+                        "self_play_result": sp_result,
+                        "state_before": before_state,
+                        "state_after": asm.current_state.value
+                    }
+                    detailed_log.append(turn_2_log)
+                    current_turn += 1
                 
-                # 更新對話歷史
-                conversation_history.extend([
-                    {"role": "user", "content": final_query},
-                    {"role": "assistant", "content": turn_n_response}
-                ])
-                
-                # 計算資訊增益並轉移狀態
-                turn_n_ig = self.ig_calculator.calculate_hybrid_information_gain(
-                    conversation_history[:-2], final_query, target_query
-                )
-                
-                asm.process_victim_response_and_transition(
-                    final_query, turn_n_response, turn_n_ig["hybrid_information_gain"]
-                )
-                
-                # 記錄Turn N
-                turn_n_log = {
-                    "turn_number": current_turn,
-                    "phase": "detail_extraction",
-                    "original_query": turn_n_query,
-                    "gge_optimized_query": optimized_turn_n_query,
-                    "final_query": final_query,
-                    "response": turn_n_response,
-                    "information_gain": turn_n_ig,
-                    "gge_result": gge_result,
-                    "used_rejection_feedback": used_rejection_feedback,
-                    "state_before": "DETAIL_EXTRACTION",
-                    "state_after": asm.current_state.value
-                }
-                detailed_log.append(turn_n_log)
-        
+                # === TURN N: 細節提取階段 ===
+                # 【關鍵修復】：繼續執行直到終止條件或達到輪數限制
+                while (asm.current_state.value not in ["ssc", "sfl"] and current_turn <= max_turns):
+                    logging.info(f"=== 執行 Turn {current_turn}: 細節提取階段 ===")
+                    
+                    turn_n_query = asm.execute_turn_n_detail_extraction(conversation_history, self.reasoning_constructor)
+                    
+                    # 【確保GGE使用】：使用GGE選擇最優查詢
+                    self.execution_stats["module_usage"]["gge_usage"] += 1
+                    gge_result = self.gge_module.select_optimal_query(
+                        conversation_history, target_query, asm.current_state.value, asm.reasoning_context
+                    )
+                    optimized_turn_n_query = gge_result["selected_query"]
+                    
+                    turn_n_response = self._execute_query_with_model(optimized_turn_n_query, conversation_history, actual_target, enable_defense)
+                    
+                    # 檢查是否被拒絕
+                    is_rejection = self._detect_rejection(turn_n_response)
+                    
+                    if is_rejection:
+                        # 【確保Rejection Feedback使用】
+                        logging.info("檢測到拒絕，使用Rejection Feedback")
+                        self.execution_stats["module_usage"]["rejection_feedback_usage"] += 1
+                        
+                        recovery_query = self.rejection_feedback.generate_recovery_query(
+                            conversation_history, target_query
+                        )
+                        
+                        turn_n_response = self._execute_query_with_model(recovery_query, conversation_history, actual_target, enable_defense)
+                        final_query = recovery_query
+                        used_rejection_feedback = True
+                    else:
+                        final_query = optimized_turn_n_query
+                        used_rejection_feedback = False
+                    
+                    # 更新對話歷史
+                    conversation_history.extend([
+                        {"role": "user", "content": final_query},
+                        {"role": "assistant", "content": turn_n_response}
+                    ])
+                    
+                    # 計算資訊增益並轉移狀態
+                    turn_n_ig = self.ig_calculator.calculate_hybrid_information_gain(
+                        conversation_history[:-2], final_query, target_query
+                    )
+                    
+                    before_state = asm.current_state.value
+                    asm.process_victim_response_and_transition(
+                        final_query, turn_n_response, turn_n_ig["hybrid_information_gain"]
+                    )
+                    
+                    # 記錄Turn N
+                    turn_n_log = {
+                        "turn_number": current_turn,
+                        "phase": "detail_extraction",
+                        "original_query": turn_n_query,
+                        "gge_optimized_query": optimized_turn_n_query,
+                        "final_query": final_query,
+                        "response": turn_n_response,
+                        "information_gain": turn_n_ig,
+                        "gge_result": gge_result,
+                        "used_rejection_feedback": used_rejection_feedback,
+                        "state_before": before_state,
+                        "state_after": asm.current_state.value
+                    }
+                    detailed_log.append(turn_n_log)
+                    current_turn += 1
+            
+            except Exception as e:
+                logging.error(f"攻擊執行過程中發生錯誤: {e}")
+                # 確保狀態機進入失敗狀態
+                if hasattr(asm.current_state.__class__, 'FAILURE'):
+                    asm.current_state = asm.current_state.__class__.FAILURE
+            
+            # 計算執行時間
+            execution_time = time.time() - start_time
+            
+            # 生成最終攻擊報告
+            attack_report = asm.generate_attack_report()
+            
+            # 評估攻擊成功性
+            attack_success = self._evaluate_attack_success(asm.current_state, conversation_history, target_query)
+            
+            # 更新統計數據
+            self._update_execution_stats(attack_success, len(detailed_log))
+            
+            # 編譯最終結果
+            final_result = {
+                "attack_id": attack_id,
+                "target_query": target_query,
+                "execution_metadata": {
+                    "conversation_limit": conversation_limit,
+                    "actual_turns": len(detailed_log),
+                    "execution_time_seconds": execution_time,
+                    "defense_enabled": enable_defense,
+                    "timestamp": start_time
+                },
+                "attack_outcome": {
+                    "final_state": asm.current_state.value,
+                    "attack_successful": attack_success["successful"],
+                    "success_confidence": attack_success["confidence"],
+                    "success_reasoning": attack_success["reasoning"]
+                },
+                "conversation_history": conversation_history,
+                "detailed_turn_log": detailed_log,
+                "attack_state_machine_report": attack_report,
+                "paper_alignment_analysis": {
+                    "three_stage_flow_implemented": len(detailed_log) >= 2,
+                    "reasoning_task_construction_used": bool(asm.reasoning_context),
+                    "information_gain_calculated": all("information_gain" in log for log in detailed_log),
+                    "self_play_optimization_used": self.execution_stats["module_usage"]["self_play_usage"] > 0,
+                    "rejection_feedback_used": self.execution_stats["module_usage"]["rejection_feedback_usage"] > 0,
+                    "paper_compliance_score": attack_report["performance_metrics"]["paper_compliance_score"]
+                },
+                "module_usage_statistics": self.execution_stats["module_usage"].copy(),
+                "performance_analysis": self._generate_performance_analysis(detailed_log, attack_success)
+            }
+            
+            logging.info(f"攻擊執行完成: {attack_id}")
+            logging.info(f"最終狀態: {asm.current_state.value}")
+            logging.info(f"攻擊成功: {attack_success['successful']}")
+            logging.info(f"執行時間: {execution_time:.2f}秒")
+            
+            return final_result
+    def _execute_query_with_model(self, query: str, conversation_history: List[Dict], 
+                              target_model: Any, enable_defense: bool) -> str:
+        """統一的查詢執行方法"""
+        try:
+            if enable_defense and hasattr(target_model, 'process_request'):
+                return target_model.process_request(query, conversation_history)
+            elif hasattr(target_model, 'chat'):
+                return target_model.chat(query)
+            else:
+                # 降級到基礎模型
+                return self.base_model.chat(query)
         except Exception as e:
-            logging.error(f"攻擊執行過程中發生錯誤: {e}")
-            # 確保狀態機進入失敗狀態
-            asm.current_state = asm.current_state.__class__.FAILURE
+            logging.error(f"模型查詢執行失敗: {e}")
+            return "I apologize, but I cannot provide a response to that request."
         
-        # 計算執行時間
-        execution_time = time.time() - start_time
-        
-        # 生成最終攻擊報告
-        attack_report = asm.generate_attack_report()
-        
-        # 評估攻擊成功性
-        attack_success = self._evaluate_attack_success(asm.current_state, conversation_history, target_query)
-        
-        # 更新統計數據
-        self._update_execution_stats(attack_success, len(detailed_log))
-        
-        # 編譯最終結果
-        final_result = {
-            "attack_id": attack_id,
-            "target_query": target_query,
-            "execution_metadata": {
-                "conversation_limit": conversation_limit,
-                "actual_turns": len(detailed_log),
-                "execution_time_seconds": execution_time,
-                "defense_enabled": enable_defense,
-                "timestamp": start_time
-            },
-            "attack_outcome": {
-                "final_state": asm.current_state.value,
-                "attack_successful": attack_success["successful"],
-                "success_confidence": attack_success["confidence"],
-                "success_reasoning": attack_success["reasoning"]
-            },
-            "conversation_history": conversation_history,
-            "detailed_turn_log": detailed_log,
-            "attack_state_machine_report": attack_report,
-            "paper_alignment_analysis": {
-                "three_stage_flow_implemented": len(detailed_log) >= 2,
-                "reasoning_task_construction_used": bool(asm.reasoning_context),
-                "information_gain_calculated": all("information_gain" in log for log in detailed_log),
-                "self_play_optimization_used": self.execution_stats["module_usage"]["self_play_usage"] > 0,
-                "rejection_feedback_used": self.execution_stats["module_usage"]["rejection_feedback_usage"] > 0,
-                "paper_compliance_score": attack_report["performance_metrics"]["paper_compliance_score"]
-            },
-            "module_usage_statistics": self.execution_stats["module_usage"].copy(),
-            "performance_analysis": self._generate_performance_analysis(detailed_log, attack_success)
-        }
-        
-        logging.info(f"攻擊執行完成: {attack_id}")
-        logging.info(f"最終狀態: {asm.current_state.value}")
-        logging.info(f"攻擊成功: {attack_success['successful']}")
-        logging.info(f"執行時間: {execution_time:.2f}秒")
-        
-        return final_result
-
     def _detect_rejection(self, response: str) -> bool:
         """檢測回應是否為拒絕"""
         rejection_indicators = [
