@@ -12,7 +12,8 @@ from collections import defaultdict
 
 class TrueSelfPlayOptimizer:
     """
-    論文對齊的Self-Play優化器
+    論文對齊的Self-Play優化器，戰術優化
+    給定一個已經存在的提問（無論是第一個提問，還是後續的追問），透過自我博弈模擬，找到最佳的措辭 (phrasing)，以最大限度地避免被拒絕。
     
     實現論文公式：
     - uMs(s, qc, rc) = 1 if rc ∉ Rrej, 0 if rc ∈ Rrej
