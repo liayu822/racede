@@ -3,6 +3,19 @@
 【論文完全對齊】Gain-Guided Exploration模組
 實現論文公式：IG(Ci-1, qs) = H(rtgt|Ci-1) - H(rtgt|Ci-1, qs)
 結合真實資訊增益計算和語義對齊機制
+
+1.GGE 提出多個「戰略方向」：
+PaperAlignedGainGuidedExploration 的 select_optimal_query 方法被啟動。
+它首先呼叫 _generate_candidate_queries，根據當前的攻擊狀態，生成數個（例如 5 個）完全不同但都有道理的後續問題。這就像一個智囊團提出了方案 A、B、C、D、E。
+
+2.GGE 評估每個「戰略方向」的潛力：
+對於每一個候選方案（每一個問題），GGE 的 _analyze_candidate_comprehensive 方法會從多個維度進行打分。
+在打分過程中，當需要評估「資訊增益」這個指標時，它會呼叫 TrueInformationGainCalculator。
+IG 計算器會執行複雜的熵計算，然後告訴 GGE：「方案 A 的資訊增益是 0.7，方案 B 是 0.5...」。
+GGE 收集完所有指標（資訊增益、語義對齊度、隱蔽性等）後，會根據當前攻擊階段的動態權重，計算出每個方案的最終「組合分數」。
+
+3.GGE 做出最終戰略決策：
+GGE 選擇那個組合分數最高的候選問題，作為本回合的最佳戰略方向。例如，它決定方案 C 是最好的。
 """
 
 import logging
