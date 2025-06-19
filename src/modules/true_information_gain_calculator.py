@@ -21,7 +21,9 @@ class TrueInformationGainCalculator:
     - H(rtgt|Ci-1, qs) 是給定上下文Ci-1和查詢qs時目標回應rtgt的條件熵
     """
     
-    def __init__(self, llm_wrapper: Any, num_samples: int = 5):
+    def __init__(self, llm_wrapper: Any, num_samples: int = 5, 
+                 temperature: float = 0.8,  # 增加隨機性
+                 entropy_scaling: float = 2.0):  # 增加熵值縮放
         """
         初始化資訊增益計算器
         
@@ -29,11 +31,14 @@ class TrueInformationGainCalculator:
             llm_wrapper: LLM封裝器，用作概率估計器
             num_samples: 用於概率估計的樣本數量
         """
-        self.llm = llm_wrapper
-        self.num_samples = num_samples
+        self.llm_wrapper = llm_wrapper
+        self.num_samples = max(3, num_samples)  # 最少3個樣本
+        self.temperature = temperature
+        self.entropy_scaling = entropy_scaling
         logging.info(f"TrueInformationGainCalculator initialized with {num_samples} samples for probability estimation")
 
-    def calculate_true_information_gain(self, context: List[Dict], candidate_query: str, target_query: str) -> Dict[str, float]:
+    def calculate_hybrid_information_gain(self, context: List[Dict], candidate_query: str, 
+                                        target_query: str) -> Dict[str, Any]:
         """
         計算真正的資訊增益，完全按照論文公式
         
@@ -292,7 +297,7 @@ Rate from 0.0 (no new information) to 1.0 (completely new information domain):""
         fig_score = self.calculate_information_novelty_fig(candidate_query, context)
         
         # 混合計算
-        hybrid_ig = 0.6 * true_ig["information_gain"] + 0.4 * (fsr_score * fig_score)
+        hybrid_ig = 0.3 * true_ig["information_gain"] + 0.7 * (fsr_score * fig_score)
         
         return {
             "true_information_gain": true_ig["information_gain"],
@@ -300,7 +305,7 @@ Rate from 0.0 (no new information) to 1.0 (completely new information domain):""
             "information_novelty_fig": fig_score,
             "hybrid_information_gain": hybrid_ig,
             "paper_formula_compliance": "Implements IG(Ci-1, qs) = H(rtgt|Ci-1) - H(rtgt|Ci-1, qs)",
-            "enhanced_formula": "Hybrid_IG = 0.6 * True_IG + 0.4 * (Fsr * Fig)"
+            "enhanced_formula": "Hybrid_IG = 0.3 * True_IG + 0.7 * (Fsr * Fig)"
         }
 
 # 測試函數
