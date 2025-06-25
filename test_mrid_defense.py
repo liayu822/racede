@@ -367,7 +367,7 @@ def run_performance_benchmark():
             
             # 隨機選擇測試案例
             case = test_cases[i % len(test_cases)]
-            result = defense_system.defend(case['query'], case['conversation_history'])
+            result = defense_system.defend(case['query'], case['conversation_history'], mock_llm)
             
             end_time = time.time()
             processing_time = end_time - start_time
