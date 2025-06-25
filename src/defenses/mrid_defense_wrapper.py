@@ -43,7 +43,7 @@ class MRIDDefenseWrapper:
         self.enable_baseline_comparison = enable_baseline_comparison
         
         # 初始化MRID核心系統
-        self.mrid_defense = MRIDIntegratedDefense(llm_wrapper, config)
+        self.mrid_defense = MRIDIntegratedDefense(llm_wrapper)
         
         # 初始化現有的Judge（如果可用）
         self.baseline_judge = None
@@ -546,7 +546,41 @@ class MRIDDefenseWrapper:
         
         logging.info("MRID實驗狀態已重置")
 
-
+def modify_attack_loop_for_mrid(executor, mrid_wrapper, goal_text, target_model, config):
+    """
+    Modify attack loop to integrate MRID defense (simplified version)
+    """
+    if mrid_wrapper is None:
+        # No MRID defense, execute original attack  
+        return executor.execute_paper_aligned_attack(
+            target_query=goal_text,
+            conversation_limit=config['attack_state_machine'].get('max_turns', 5),
+            target_model=target_model,
+            enable_defense=False
+        )
+    
+    # Simplified MRID integration
+    print(f"🛡️ Executing attack with MRID defense: {goal_text[:50]}...")
+    
+    # Process the goal with MRID defense
+    result = mrid_wrapper.process_query(goal_text)
+    
+    # Return simplified attack result
+    return {
+        'target_query': goal_text,
+        'conversation_history': [
+            {'role': 'user', 'content': goal_text},
+            {'role': 'assistant', 'content': result['final_response']}
+        ],
+        'attack_outcome': {
+            'attack_successful': result['defense_action'] == 'allow',
+            'final_state': 'blocked_by_defense' if result['defense_action'] == 'block' else 'allowed',
+            'total_turns': 1
+        },
+        'defense_logs': [result],
+        'final_response': result['final_response'],
+        'attack_id': f"mrid_defense_{int(time.time())}"
+    }
 # 與現有run_experiment.py的整合接口
 def integrate_mrid_with_experiment(config: Dict, llm_wrapper) -> MRIDDefenseWrapper:
     """
