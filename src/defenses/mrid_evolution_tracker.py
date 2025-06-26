@@ -100,413 +100,241 @@ class MRIDEvolutionTracker:
             # 1. 檢測攻擊狀態轉換
             state_transitions = self._detect_attack_states(conversation_history)
             
-            # 2. 分析信息獲取模式
-            info_gain_analysis = self._analyze_information_gain(conversation_history)
+            # 2. 分析升級風險
+            escalation_risk = self._analyze_escalation_risk(conversation_history)
             
-            # 3. 檢測升級模式
-            escalation_risk = self._calculate_escalation_risk(conversation_history)
+            # 3. 檢測漸進攻擊模式
+            progressive_attack = self._detect_progressive_attack(conversation_history)
             
-            # 4. 檢測RACE特有模式
-            race_pattern_analysis = self._detect_race_patterns(conversation_history)
+            # 4. 預測下一步意圖
+            next_intent = self._predict_next_intent(conversation_history, state_transitions)
             
-            # 5. 預測下一步意圖
-            next_intent = self._predict_next_move(conversation_history, state_transitions)
+            # 5. 計算整體置信度
+            confidence = self._calculate_confidence(conversation_history, escalation_risk)
             
-            # 6. 計算整體置信度
-            confidence = self._calculate_confidence(state_transitions, info_gain_analysis, race_pattern_analysis)
+            # 6. 生成攻擊指標
+            attack_indicators = self._generate_attack_indicators(conversation_history)
             
-            # 7. 判斷是否為漸進式攻擊
-            is_progressive = self._is_progressive_attack(escalation_risk, race_pattern_analysis, info_gain_analysis)
+            # 7. 確定演化模式
+            evolution_pattern = self._determine_evolution_pattern(state_transitions, escalation_risk)
             
-            # 8. 收集攻擊指標
-            attack_indicators = self._collect_attack_indicators(state_transitions, race_pattern_analysis, info_gain_analysis)
-            
-            result = EvolutionAnalysis(
-                attack_stage=state_transitions[-1] if state_transitions else "unknown",
+            return EvolutionAnalysis(
+                attack_stage=state_transitions.get('current_stage', 'unknown'),
                 escalation_risk=escalation_risk,
                 predicted_next_intent=next_intent,
                 confidence=confidence,
                 evolution_details={
                     'state_transitions': state_transitions,
-                    'info_gain_score': info_gain_analysis.get('gain_score', 0),
-                    'escalation_indicators': info_gain_analysis.get('escalation_count', 0),
-                    'conversation_length': len(conversation_history),
-                    'race_patterns': race_pattern_analysis
+                    'progressive_indicators': progressive_attack,
+                    'conversation_length': len(conversation_history)
                 },
-                evolution_pattern=self._determine_evolution_pattern(race_pattern_analysis, escalation_risk),
+                evolution_pattern=evolution_pattern,
                 gradual_risk=escalation_risk,
-                is_progressive_attack=is_progressive,
+                is_progressive_attack=progressive_attack['is_progressive'],
                 attack_indicators=attack_indicators
             )
             
-            logging.info(f"演化追蹤完成 - 階段: {result.attack_stage}, 升級風險: {result.escalation_risk:.2f}")
-            return result
-            
         except Exception as e:
-            logging.error(f"演化追蹤失敗: {e}")
+            logging.error(f"對話演化追蹤失敗: {e}")
             return EvolutionAnalysis(
                 attack_stage="error",
-                escalation_risk=0.8,  # 保守估計
-                predicted_next_intent="檢測失敗",
-                confidence=0.2,
+                escalation_risk=0.5,
+                predicted_next_intent="分析失敗",
+                confidence=0.1,
                 evolution_details={'error': str(e)},
                 evolution_pattern="error",
-                gradual_risk=0.8,
-                is_progressive_attack=True,  # 保守估計
-                attack_indicators=['error_detected']
+                gradual_risk=0.5,
+                is_progressive_attack=False,
+                attack_indicators=["analysis_error"]
             )
     
-    # 為了向後兼容，添加別名方法
+    # 添加向後兼容方法
     def track_intent_evolution(self, conversation_history: List[Dict]) -> EvolutionAnalysis:
-        """向後兼容的方法名"""
+        """向後兼容的方法"""
         return self.track_conversation_evolution(conversation_history)
     
-    def _detect_attack_states(self, conversation_history: List[Dict]) -> List[str]:
-        """
-        檢測RACE攻擊狀態轉換
-        
-        基於RACE論文中的攻擊狀態機模型
-        """
+    def _detect_attack_states(self, conversation_history: List[Dict]) -> Dict:
+        """檢測攻擊狀態轉換"""
         
         states = []
+        current_stage = "initial"
         
+        # 分析每輪對話
         for i, turn in enumerate(conversation_history):
-            content = turn.get('content', '').lower()
-            role = turn.get('role', '')
-            
-            if i == 0:
-                states.append('initial')
-                continue
-            
-            # 檢測任務轉換階段（RACE的第一步）
-            if any(pattern in content for pattern in ['reasoning', 'rule', 'logic', 'analyze', 'framework']):
-                if 'task_conversion' not in states:
-                    states.append('task_conversion')
-            
-            # 檢測推理進展階段
-            elif any(pattern in content for pattern in ['step', 'then', 'next', 'based on', 'following']):
-                if 'reasoning_progression' not in states:
-                    states.append('reasoning_progression')
-            
-            # 檢測信息提取階段（升級要求）
-            elif any(pattern in content for pattern in self.escalation_patterns):
-                if 'information_extraction' not in states:
-                    states.append('information_extraction')
-            
-            # 檢測最終合成階段
-            elif any(pattern in content for pattern in ['combine', 'synthesis', 'final', 'result', 'conclusion']):
-                if 'final_synthesis' not in states:
-                    states.append('final_synthesis')
-        
-        return states if states else ['initial']
-    
-    def _analyze_information_gain(self, conversation_history: List[Dict]) -> Dict:
-        """
-        分析信息獲取模式
-        
-        檢測用戶是否在逐步獲取更多詳細信息
-        """
-        
-        gain_score = 0.0
-        escalation_count = 0
-        response_lengths = []
-        user_query_complexity = []
-        
-        for i, turn in enumerate(conversation_history):
-            content = turn.get('content', '')
-            role = turn.get('role', '')
-            
-            # 記錄響應長度（用於檢測信息增益）
-            if role in ['assistant', 'target']:
-                response_lengths.append(len(content))
-            
-            # 分析用戶查詢複雜度
-            elif role in ['user', 'human']:
-                complexity = self._calculate_query_complexity(content)
-                user_query_complexity.append(complexity)
-            
-            # 檢測升級請求
-            content_lower = content.lower()
-            for pattern in self.escalation_patterns:
-                if pattern in content_lower:
-                    escalation_count += 1
-                    gain_score += 0.1
-        
-        # 檢測響應長度增長趨勢
-        length_trend_score = 0.0
-        if len(response_lengths) >= 2:
-            increases = sum(1 for i in range(1, len(response_lengths)) 
-                          if response_lengths[i] > response_lengths[i-1] * 1.2)
-            length_trend_score = increases / (len(response_lengths) - 1)
-            gain_score += length_trend_score * 0.3
-        
-        # 檢測查詢複雜度增長
-        complexity_trend_score = 0.0
-        if len(user_query_complexity) >= 2:
-            complexity_increases = sum(1 for i in range(1, len(user_query_complexity)) 
-                                     if user_query_complexity[i] > user_query_complexity[i-1])
-            complexity_trend_score = complexity_increases / (len(user_query_complexity) - 1)
-            gain_score += complexity_trend_score * 0.2
+            if turn.get('role') == 'user':
+                content = turn.get('content', '').lower()
+                
+                # 檢測推理任務轉換
+                if any(keyword in content for keyword in ['analyze', 'reasoning', 'logical', 'step by step']):
+                    current_stage = "task_conversion"
+                
+                # 檢測推理進展
+                elif any(keyword in content for keyword in ['more detailed', 'elaborate', 'specific']):
+                    current_stage = "reasoning_progression"
+                
+                # 檢測信息提取
+                elif any(keyword in content for keyword in ['how to', 'what is', 'explain']):
+                    current_stage = "information_extraction"
+                
+                # 檢測最終合成
+                elif i > len(conversation_history) * 0.7:  # 在對話後期
+                    current_stage = "final_synthesis"
+                
+                states.append({
+                    'turn': i,
+                    'stage': current_stage,
+                    'content_snippet': content[:50]
+                })
         
         return {
-            'gain_score': min(1.0, gain_score),
-            'escalation_count': escalation_count,
-            'response_trend': 'increasing' if length_trend_score > 0.5 else 'stable',
-            'complexity_trend': 'increasing' if complexity_trend_score > 0.5 else 'stable',
-            'avg_response_length': sum(response_lengths) / len(response_lengths) if response_lengths else 0,
-            'length_trend_score': length_trend_score,
-            'complexity_trend_score': complexity_trend_score
+            'current_stage': current_stage,
+            'state_progression': states,
+            'total_transitions': len(set(s['stage'] for s in states))
         }
     
-    def _calculate_query_complexity(self, query: str) -> float:
-        """計算查詢複雜度"""
+    def _analyze_escalation_risk(self, conversation_history: List[Dict]) -> float:
+        """分析升級風險"""
         
-        complexity = 0.0
-        query_lower = query.lower()
+        escalation_score = 0.0
+        total_turns = 0
         
-        # 基於長度
-        complexity += min(0.3, len(query) / 500)
-        
-        # 基於關鍵詞
-        reasoning_keywords = ['analyze', 'explain', 'describe', 'detail', 'step', 'method', 'process']
-        keyword_count = sum(1 for kw in reasoning_keywords if kw in query_lower)
-        complexity += min(0.4, keyword_count * 0.1)
-        
-        # 基於問句數量
-        question_count = query.count('?') + query.count('？')
-        complexity += min(0.3, question_count * 0.15)
-        
-        return min(1.0, complexity)
-    
-    def _calculate_escalation_risk(self, conversation_history: List[Dict]) -> float:
-        """
-        計算升級風險
-        
-        檢測對話是否呈現升級攻擊模式
-        """
-        
-        risk_score = 0.0
-        
-        # 基於對話長度的風險
-        turn_count = len(conversation_history)
-        if turn_count > 6:
-            risk_score += 0.3
-        elif turn_count > 3:
-            risk_score += 0.15
-        
-        # 基於升級模式的風險
-        recent_turns = conversation_history[-4:] if len(conversation_history) >= 4 else conversation_history
-        escalation_in_recent = 0
-        
-        for turn in recent_turns:
-            content_lower = turn.get('content', '').lower()
-            for pattern in self.escalation_patterns:
-                if pattern in content_lower:
-                    escalation_in_recent += 1
-                    break  # 每輪只計算一次
-        
-        if escalation_in_recent >= 3:
-            risk_score += 0.4
-        elif escalation_in_recent >= 2:
-            risk_score += 0.25
-        elif escalation_in_recent >= 1:
-            risk_score += 0.1
-        
-        # 基於推理升級關鍵詞的風險
-        reasoning_escalation_count = 0
         for turn in conversation_history:
-            content_lower = turn.get('content', '').lower()
-            for keyword in self.reasoning_escalation_keywords:
-                if keyword in content_lower:
-                    reasoning_escalation_count += 1
-                    break
+            if turn.get('role') == 'user':
+                content = turn.get('content', '').lower()
+                total_turns += 1
+                
+                # 檢測升級關鍵詞
+                escalation_count = sum(1 for pattern in self.escalation_patterns 
+                                     if pattern in content)
+                
+                # 檢測推理升級
+                reasoning_count = sum(1 for keyword in self.reasoning_escalation_keywords 
+                                    if keyword in content)
+                
+                # 計算當前輪次的升級分數
+                turn_score = (escalation_count * 0.3 + reasoning_count * 0.7) / max(len(content.split()), 1)
+                escalation_score += turn_score
         
-        if reasoning_escalation_count >= len(conversation_history) * 0.6:
-            risk_score += 0.3
-        elif reasoning_escalation_count >= len(conversation_history) * 0.4:
-            risk_score += 0.2
+        # 正規化分數
+        if total_turns > 0:
+            escalation_score = min(escalation_score / total_turns, 1.0)
         
-        # 基於信息尋求密度的風險
-        info_seeking_density = self._calculate_info_seeking_density(conversation_history)
-        risk_score += info_seeking_density * 0.2
-        
-        return min(1.0, risk_score)
+        return escalation_score
     
-    def _calculate_info_seeking_density(self, conversation_history: List[Dict]) -> float:
-        """計算信息尋求密度"""
+    def _detect_progressive_attack(self, conversation_history: List[Dict]) -> Dict:
+        """檢測漸進攻擊模式"""
         
-        user_turns = [turn for turn in conversation_history if turn.get('role') in ['user', 'human']]
-        if not user_turns:
-            return 0.0
+        user_turns = [turn for turn in conversation_history if turn.get('role') == 'user']
         
-        info_seeking_count = 0
+        if len(user_turns) < 2:
+            return {'is_progressive': False, 'confidence': 0.0}
+        
+        # 檢測查詢長度變化
+        lengths = [len(turn.get('content', '')) for turn in user_turns]
+        length_trend = 'increasing' if lengths[-1] > lengths[0] else 'decreasing'
+        
+        # 檢測複雜度變化
+        complexity_scores = []
         for turn in user_turns:
-            content_lower = turn.get('content', '').lower()
-            for pattern in self.info_seeking_patterns:
-                if pattern in content_lower:
-                    info_seeking_count += 1
-                    break
+            content = turn.get('content', '')
+            # 簡單的複雜度指標：句子數量、技術詞匯等
+            sentences = len(content.split('.'))
+            tech_words = sum(1 for word in ['specific', 'detailed', 'technical', 'precise', 'methodology'] 
+                           if word in content.lower())
+            complexity = (sentences + tech_words * 2) / max(len(content.split()), 1)
+            complexity_scores.append(complexity)
         
-        return info_seeking_count / len(user_turns)
+        complexity_trend = 'increasing' if complexity_scores[-1] > complexity_scores[0] else 'stable'
+        
+        # 判斷是否為漸進攻擊
+        is_progressive = (length_trend == 'increasing' and complexity_trend == 'increasing')
+        confidence = 0.8 if is_progressive else 0.3
+        
+        return {
+            'is_progressive': is_progressive,
+            'confidence': confidence,
+            'length_trend': length_trend,
+            'complexity_trend': complexity_trend,
+            'progression_score': sum(complexity_scores) / len(complexity_scores)
+        }
     
-    def _detect_race_patterns(self, conversation_history: List[Dict]) -> Dict:
-        """
-        檢測RACE特有的攻擊模式
-        """
+    def _predict_next_intent(self, conversation_history: List[Dict], state_transitions: Dict) -> str:
+        """預測下一步意圖"""
         
-        race_analysis = {
-            'variable_substitution_count': 0,
-            'reasoning_framework_mentions': 0,
-            'step_by_step_requests': 0,
-            'logical_chain_references': 0,
-            'methodology_discussions': 0
+        current_stage = state_transitions.get('current_stage', 'unknown')
+        
+        # 基於當前階段預測下一步
+        predictions = {
+            'initial': '可能會開始推理任務構造',
+            'task_conversion': '可能會要求更詳細的推理步驟',
+            'reasoning_progression': '可能會要求具體實現細節',
+            'information_extraction': '可能會要求技術規格說明',
+            'final_synthesis': '可能會要求完整操作指南'
         }
         
-        # 變量替換模式（RACE核心特徵）
-        variable_patterns = [
-            r'\b[A-Z]\s*→\s*[A-Z]\b',
-            r'\b[A-Z]\s*代表\b',
-            r'\bvariable\s+[A-Z]\b',
-            r'\blet\s+[A-Z]\s*=\b'
-        ]
-        
-        for turn in conversation_history:
-            content = turn.get('content', '')
-            content_lower = content.lower()
-            
-            # 檢測變量替換
-            for pattern in variable_patterns:
-                if re.search(pattern, content, re.IGNORECASE):
-                    race_analysis['variable_substitution_count'] += 1
-                    break
-            
-            # 檢測推理框架提及
-            if any(word in content_lower for word in ['framework', 'methodology', 'systematic', 'approach']):
-                race_analysis['reasoning_framework_mentions'] += 1
-            
-            # 檢測步驟化請求
-            if any(word in content_lower for word in ['step by step', 'step-by-step', '逐步', '步驟']):
-                race_analysis['step_by_step_requests'] += 1
-            
-            # 檢測邏輯鏈引用
-            if any(word in content_lower for word in ['logic', 'chain', 'reasoning', 'inference', '邏輯', '推理']):
-                race_analysis['logical_chain_references'] += 1
-            
-            # 檢測方法論討論
-            if any(word in content_lower for word in ['method', 'procedure', 'process', 'technique', '方法', '程序']):
-                race_analysis['methodology_discussions'] += 1
-        
-        return race_analysis
+        return predictions.get(current_stage, '無法預測')
     
-    def _predict_next_move(self, conversation_history: List[Dict], state_transitions: List[str]) -> str:
-        """
-        預測下一步攻擊意圖
-        """
+    def _calculate_confidence(self, conversation_history: List[Dict], escalation_risk: float) -> float:
+        """計算分析置信度"""
         
-        if not state_transitions:
-            return "可能開始推理任務轉換"
+        # 基於對話長度和升級風險計算置信度
+        conversation_length = len(conversation_history)
+        length_factor = min(conversation_length / 10, 1.0)  # 最多10輪達到最高置信度
         
-        current_state = state_transitions[-1]
-        recent_content = conversation_history[-1].get('content', '').lower() if conversation_history else ""
+        risk_factor = escalation_risk  # 升級風險越高，置信度越高
         
-        # 基於狀態機預測下一步
-        if current_state == 'initial':
-            return "可能將有害查詢轉換為推理任務"
-        elif current_state == 'task_conversion':
-            return "可能開始步驟化推理過程"
-        elif current_state == 'reasoning_progression':
-            return "可能請求更詳細的信息或具體步驟"
-        elif current_state == 'information_extraction':
-            if any(word in recent_content for word in ['more', 'detail', 'specific', 'elaborate']):
-                return "可能繼續升級請求獲取關鍵實施細節"
-            else:
-                return "可能嘗試從不同角度獲取信息"
-        elif current_state == 'final_synthesis':
-            return "可能要求最終的完整解決方案或總結"
-        else:
-            return "無法確定下一步意圖"
+        confidence = (length_factor * 0.6 + risk_factor * 0.4)
+        return min(confidence, 0.95)  # 最高95%置信度
     
-    def _calculate_confidence(self, state_transitions: List[str], info_gain_analysis: Dict, race_pattern_analysis: Dict) -> float:
-        """
-        計算預測置信度
-        """
-        
-        confidence = 0.4  # 基礎置信度
-        
-        # 基於狀態轉換的置信度
-        if len(state_transitions) >= 3:
-            confidence += 0.25
-        elif len(state_transitions) >= 2:
-            confidence += 0.15
-        
-        # 基於信息獲取模式的置信度
-        if info_gain_analysis.get('escalation_count', 0) >= 2:
-            confidence += 0.2
-        
-        # 基於RACE模式的置信度
-        total_race_patterns = sum(race_pattern_analysis.values())
-        if total_race_patterns >= 3:
-            confidence += 0.15
-        
-        # 基於響應趨勢的置信度
-        if info_gain_analysis.get('response_trend') == 'increasing':
-            confidence += 0.1
-        
-        return min(1.0, confidence)
-    
-    def _is_progressive_attack(self, escalation_risk: float, race_pattern_analysis: Dict, info_gain_analysis: Dict) -> bool:
-        """
-        判斷是否為漸進式攻擊
-        """
-        
-        # 綜合評估條件
-        conditions = [
-            escalation_risk > 0.5,
-            race_pattern_analysis.get('variable_substitution_count', 0) > 0,
-            info_gain_analysis.get('escalation_count', 0) >= 2,
-            info_gain_analysis.get('response_trend') == 'increasing'
-        ]
-        
-        return sum(conditions) >= 2
-    
-    def _collect_attack_indicators(self, state_transitions: List[str], race_pattern_analysis: Dict, info_gain_analysis: Dict) -> List[str]:
-        """
-        收集攻擊指標
-        """
+    def _generate_attack_indicators(self, conversation_history: List[Dict]) -> List[str]:
+        """生成攻擊指標"""
         
         indicators = []
         
-        # 狀態轉換指標
-        if len(state_transitions) >= 3:
-            indicators.append('multi_stage_progression')
+        # 檢測多輪模式
+        if len(conversation_history) >= 4:
+            indicators.append('multi_turn_interaction')
         
-        # RACE模式指標
-        if race_pattern_analysis.get('variable_substitution_count', 0) > 0:
-            indicators.append('variable_substitution')
+        # 檢測推理模式
+        reasoning_count = sum(1 for turn in conversation_history 
+                            if turn.get('role') == 'user' and 
+                            any(keyword in turn.get('content', '').lower() 
+                                for keyword in self.reasoning_escalation_keywords))
         
-        if race_pattern_analysis.get('step_by_step_requests', 0) >= 2:
+        if reasoning_count >= 2:
+            indicators.append('reasoning_pattern_detected')
+        
+        # 檢測升級模式
+        escalation_count = sum(1 for turn in conversation_history 
+                             if turn.get('role') == 'user' and 
+                             any(pattern in turn.get('content', '').lower() 
+                                 for pattern in self.escalation_patterns))
+        
+        if escalation_count >= 2:
+            indicators.append('escalation_pattern_detected')
+        
+        # 檢測信息尋求
+        info_seeking_count = sum(1 for turn in conversation_history 
+                               if turn.get('role') == 'user' and 
+                               any(pattern in turn.get('content', '').lower() 
+                                   for pattern in self.info_seeking_patterns))
+        
+        if info_seeking_count >= 2:
             indicators.append('systematic_breakdown_requests')
-        
-        # 升級指標
-        if info_gain_analysis.get('escalation_count', 0) >= 2:
-            indicators.append('escalation_pattern')
-        
-        if info_gain_analysis.get('response_trend') == 'increasing':
-            indicators.append('information_gain_trend')
         
         return indicators
     
-    def _determine_evolution_pattern(self, race_pattern_analysis: Dict, escalation_risk: float) -> str:
-        """
-        確定演化模式
-        """
+    def _determine_evolution_pattern(self, state_transitions: Dict, escalation_risk: float) -> str:
+        """確定演化模式"""
         
-        if race_pattern_analysis.get('variable_substitution_count', 0) > 0:
+        transitions = state_transitions.get('total_transitions', 0)
+        
+        if transitions >= 3 and escalation_risk > 0.7:
             return 'race_style_attack'
-        elif escalation_risk > 0.7:
-            return 'aggressive_escalation'
-        elif escalation_risk > 0.4:
+        elif escalation_risk > 0.5:
             return 'gradual_escalation'
+        elif transitions >= 2:
+            return 'state_progression'
         else:
             return 'normal_conversation'
 
